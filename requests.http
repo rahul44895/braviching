@@ -1,0 +1,436 @@
+### Client Ops & Campaign Manager -- manual verification requests
+### Requires the VS Code "REST Client" extension. Run `npm run db:setup` first so the seeded
+### users/clients/campaigns/tasks below exist. Each block is annotated with the expected result --
+### this is the "requests.http" companion referenced in the README (see also src/database/seeders
+### for exactly what data each seeded user/permission/assignment looks like).
+
+@baseUrl = http://localhost:4000
+
+### ============================================================================
+### AUTH -- login as every seeded role, capture access tokens for use below
+### ============================================================================
+
+### Login: SuperAdmin
+# @name loginSuperadmin
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "superadmin@example.com",
+  "password": "Password123!"
+}
+
+### Login: Manager1 (paid_media, assigned to Acme Sportswear / client_id=1)
+# @name loginManager1
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "manager1@example.com",
+  "password": "Password123!"
+}
+
+### Login: Employee1 (paid_media, reports to Manager1)
+# @name loginEmployee1
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "employee1@example.com",
+  "password": "Password123!"
+}
+
+### Login: Manager2 (storefront_craft, assigned to Nova Skincare / client_id=2)
+# @name loginManager2
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "manager2@example.com",
+  "password": "Password123!"
+}
+
+### Login: Employee2 (storefront_craft, reports to Manager2)
+# @name loginEmployee2
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "employee2@example.com",
+  "password": "Password123!"
+}
+
+### Login: Client1 (read-only, owns Acme Sportswear / client_id=1)
+# @name loginClient1
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "client1@example.com",
+  "password": "Password123!"
+}
+
+### Login: Client2 (read-only, owns Nova Skincare / client_id=2)
+# @name loginClient2
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "client2@example.com",
+  "password": "Password123!"
+}
+
+### Login with wrong password -- expect 401
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "manager1@example.com",
+  "password": "wrong-password"
+}
+
+### Hit a protected route with no Authorization header -- expect 401
+POST {{baseUrl}}/auth/logout
+
+
+### ============================================================================
+### CLIENT-ACCESS CASCADE -- clients list differs per role, no separate table for employees
+### ============================================================================
+
+### SuperAdmin: list clients -- expect ALL (Acme + Nova)
+GET {{baseUrl}}/clients
+Authorization: Bearer {{loginSuperadmin.response.body.$.accessToken}}
+
+### Manager1: list clients -- expect only Acme (their client_assignments row)
+GET {{baseUrl}}/clients
+Authorization: Bearer {{loginManager1.response.body.$.accessToken}}
+
+### Employee1: list clients -- expect only Acme too, resolved via manager1's assignment
+### (no separate assignment row exists for employees -- this is the cascade in action)
+GET {{baseUrl}}/clients
+Authorization: Bearer {{loginEmployee1.response.body.$.accessToken}}
+
+### Client1: list clients -- expect only their own (Acme)
+GET {{baseUrl}}/clients
+Authorization: Bearer {{loginClient1.response.body.$.accessToken}}
+
+### SuperAdmin: create a new client -- expect 201
+POST {{baseUrl}}/clients
+Authorization: Bearer {{loginSuperadmin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "company_name": "Test Client Co"
+}
+
+### Manager1: try to create a client -- expect 403 (no department grants client:create)
+POST {{baseUrl}}/clients
+Authorization: Bearer {{loginManager1.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "company_name": "Unauthorized Client"
+}
+
+### Client2: read client 1 (Acme, not theirs) -- expect 403 from clientScope, not permission
+GET {{baseUrl}}/clients/1
+Authorization: Bearer {{loginClient2.response.body.$.accessToken}}
+
+### Client1: read client 1 (their own) -- expect 200 (client role bypasses the permission table
+### for reads, see permission.middleware.js -- clients aren't part of the department system)
+GET {{baseUrl}}/clients/1
+Authorization: Bearer {{loginClient1.response.body.$.accessToken}}
+
+### Nested read alias: Employee1 views Acme's campaigns via /clients/:id/campaigns
+GET {{baseUrl}}/clients/1/campaigns
+Authorization: Bearer {{loginEmployee1.response.body.$.accessToken}}
+
+
+### ============================================================================
+### CAMPAIGNS -- permission + client-scope both enforced, checked as separate steps
+### ============================================================================
+
+### SuperAdmin: list all campaigns (both clients)
+GET {{baseUrl}}/campaigns
+Authorization: Bearer {{loginSuperadmin.response.body.$.accessToken}}
+
+### Manager1: list campaigns -- expect only Acme's
+GET {{baseUrl}}/campaigns
+Authorization: Bearer {{loginManager1.response.body.$.accessToken}}
+
+### Manager1: create a campaign for client_id=1 (assigned to them) -- expect 201
+# @name createCampaign
+POST {{baseUrl}}/campaigns
+Authorization: Bearer {{loginManager1.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "client_id": 1,
+  "channel": "tiktok",
+  "name": "New TikTok push",
+  "budget": 800
+}
+
+### Manager1: create a campaign for client_id=2 (NOT assigned to them) -- expect 403
+### Demonstrates: holding campaign:create generally doesn't grant access to every client.
+POST {{baseUrl}}/campaigns
+Authorization: Bearer {{loginManager1.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "client_id": 2,
+  "channel": "google",
+  "name": "Unauthorized attempt",
+  "budget": 100
+}
+
+### Client1: try to create a campaign -- expect 403 (clients are read-only, always)
+POST {{baseUrl}}/campaigns
+Authorization: Bearer {{loginClient1.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "client_id": 1,
+  "channel": "meta",
+  "name": "Client attempt"
+}
+
+### Employee1: update campaign 1 (paid_media dept default includes campaign:update) -- expect 200
+PATCH {{baseUrl}}/campaigns/1
+Authorization: Bearer {{loginEmployee1.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "status": "paused"
+}
+
+### Manager1: soft-delete the campaign created above -- expect 204
+DELETE {{baseUrl}}/campaigns/{{createCampaign.response.body.$.id}}
+Authorization: Bearer {{loginManager1.response.body.$.accessToken}}
+
+### SuperAdmin: list campaigns again -- the deleted one is gone from results (soft delete, not
+### a real row removal -- see README's "no hard deletes" design decision)
+GET {{baseUrl}}/campaigns
+Authorization: Bearer {{loginSuperadmin.response.body.$.accessToken}}
+
+
+### ============================================================================
+### TASKS -- special case: PATCH allowed if self-assigned OR holds task:update
+### ============================================================================
+
+### Employee1: list tasks -- expect Acme's tasks, resolved via manager1's client assignment
+GET {{baseUrl}}/tasks
+Authorization: Bearer {{loginEmployee1.response.body.$.accessToken}}
+
+### Employee1: update task 1 (assigned to them) -- expect 200 via the self-assign branch
+PATCH {{baseUrl}}/tasks/1
+Authorization: Bearer {{loginEmployee1.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "status": "in_progress"
+}
+
+### Manager1: update task 1 (NOT assigned to them, but holds task:update) -- expect 200 via the
+### permission branch -- clientScope still applies to both branches regardless of which grants access.
+PATCH {{baseUrl}}/tasks/1
+Authorization: Bearer {{loginManager1.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "status": "open"
+}
+
+### Employee2: try to update task 1 (Acme's, not their client) -- expect 403 from clientScope
+### (blocked before the self-assign/permission branch is even reached)
+PATCH {{baseUrl}}/tasks/1
+Authorization: Bearer {{loginEmployee2.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "status": "done"
+}
+
+
+### ============================================================================
+### STOREFRONTS / MARKETPLACE ACCOUNTS -- same permission + clientScope pattern as campaigns
+### ============================================================================
+
+### Manager2: create a storefront for Nova Skincare (client_id=2, assigned to them) -- expect 201
+POST {{baseUrl}}/storefronts
+Authorization: Bearer {{loginManager2.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "client_id": 2,
+  "platform": "shopify",
+  "url": "https://nova-skincare.myshopify.com"
+}
+
+### SuperAdmin: create a marketplace account for Acme (client_id=1) -- expect 201
+POST {{baseUrl}}/marketplace-accounts
+Authorization: Bearer {{loginSuperadmin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "client_id": 1,
+  "platform": "amazon"
+}
+
+
+### ============================================================================
+### PERMISSION DELEGATION -- SuperAdmin->Manager and Manager->Employee, same shared endpoint
+### ============================================================================
+
+### SuperAdmin grants Manager2 permission_id=1 (client:create) -- expect 200
+### (SuperAdmin bypasses the additive department/grant system entirely -- see canGrantPermission.js)
+PATCH {{baseUrl}}/users/4/permissions
+Authorization: Bearer {{loginSuperadmin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "permission_id": 1
+}
+
+### Manager1 tries to grant a permission to Manager2 (a peer manager) -- expect 403
+### Demonstrates: a Manager can never alter another Manager's permissions, full stop.
+PATCH {{baseUrl}}/users/4/permissions
+Authorization: Bearer {{loginManager1.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "permission_id": 20
+}
+
+### Manager1 tries to grant Employee1 a permission Manager1 doesn't hold (client:create) -- expect 403
+### Demonstrates the core delegation rule: can't grant what you don't yourself hold.
+PATCH {{baseUrl}}/users/3/permissions
+Authorization: Bearer {{loginManager1.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "permission_id": 1
+}
+
+### Manager2 (now holds client:create from the grant above) grants it to Employee2 -- expect 200
+### Demonstrates Manager->Employee delegation using the *same* canGrantPermission function.
+PATCH {{baseUrl}}/users/5/permissions
+Authorization: Bearer {{loginManager2.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "permission_id": 1
+}
+
+
+### ============================================================================
+### USER DEACTIVATION CASCADE -- deactivating a Manager cascades to their Employees
+### ============================================================================
+
+### Employee2: confirm access works before deactivation
+GET {{baseUrl}}/tasks
+Authorization: Bearer {{loginEmployee2.response.body.$.accessToken}}
+
+### SuperAdmin deactivates Manager2 -- expect Employee2 to be cascaded to is_active=false too,
+### and both to have their sessions revoked immediately (see users.service.js#setActiveStatus)
+PATCH {{baseUrl}}/users/4/status
+Authorization: Bearer {{loginSuperadmin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "is_active": false
+}
+
+### Employee2's still-valid (< 15 min old) access token is rejected immediately -- expect 401
+### (auth.middleware re-checks is_active live on every request, not just on refresh)
+GET {{baseUrl}}/tasks
+Authorization: Bearer {{loginEmployee2.response.body.$.accessToken}}
+
+### Employee2 tries to log in again while inactive -- expect 401
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "employee2@example.com",
+  "password": "Password123!"
+}
+
+### Cleanup: reactivate Manager2 (reactivation is never auto-cascaded -- must be explicit per user)
+PATCH {{baseUrl}}/users/4/status
+Authorization: Bearer {{loginSuperadmin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "is_active": true
+}
+
+### Cleanup: reactivate Employee2 too
+PATCH {{baseUrl}}/users/5/status
+Authorization: Bearer {{loginSuperadmin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "is_active": true
+}
+
+
+### ============================================================================
+### MANAGERS / CLIENT ASSIGNMENT
+### ============================================================================
+
+### SuperAdmin assigns Nova Skincare (client_id=2) to Manager1 as a second client -- expect 201
+POST {{baseUrl}}/managers/2/clients
+Authorization: Bearer {{loginSuperadmin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "client_id": 2
+}
+
+### Manager1 tries to assign clients themselves -- expect 403 (SuperAdmin only)
+POST {{baseUrl}}/managers/2/clients
+Authorization: Bearer {{loginManager1.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "client_id": 2
+}
+
+
+### ============================================================================
+### DEPARTMENTS / AUDIT LOGS
+### ============================================================================
+
+### Any authenticated staff role can list departments (dropdown data)
+GET {{baseUrl}}/departments
+Authorization: Bearer {{loginEmployee1.response.body.$.accessToken}}
+
+### Non-SuperAdmin tries to create a department -- expect 403
+POST {{baseUrl}}/departments
+Authorization: Bearer {{loginManager1.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "new_dept"
+}
+
+### SuperAdmin views the audit log -- expect every mutation above to show up here
+GET {{baseUrl}}/audit-logs
+Authorization: Bearer {{loginSuperadmin.response.body.$.accessToken}}
+
+### Manager1 tries to view the audit log -- expect 403 (SuperAdmin only)
+GET {{baseUrl}}/audit-logs
+Authorization: Bearer {{loginManager1.response.body.$.accessToken}}
+
+
+### ============================================================================
+### REFRESH / LOGOUT
+### ============================================================================
+
+### Refresh using the cookie set by the SuperAdmin login above -- expect a rotated token pair
+### (REST Client persists cookies per host automatically within a session)
+POST {{baseUrl}}/auth/refresh
+
+### Logout -- expect 204, and the refresh token to be revoked (a subsequent refresh 401s)
+POST {{baseUrl}}/auth/logout
+Authorization: Bearer {{loginSuperadmin.response.body.$.accessToken}}

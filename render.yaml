@@ -1,0 +1,41 @@
+# Render Blueprint -- see README.md "Deploying to Render" for context and trade-offs.
+#
+# Single service: Node + MySQL in one container (deploy/single-container/start.sh boots MySQL,
+# bootstraps it on first run, then hands off to the app). Deliberately no Persistent Disk here --
+# Persistent Disks require a paid instance type, and this is intentionally kept on the free plan.
+# The trade-off: MySQL's data does NOT survive a redeploy or a free-tier cold start (Render spins
+# free services down after 15 min idle) -- start.sh's seed guard means it always comes back up to
+# the same pristine documented seed state, but anything created/changed since the last boot is
+# gone. See README's "Deploying to Render" section before assuming this fits your use case.
+
+services:
+  - type: web
+    name: client-ops-api
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DB_HOST
+        value: 127.0.0.1
+      - key: DB_PORT
+        value: 3306
+      - key: DB_NAME
+        value: client_ops
+      - key: DB_USER
+        value: app_user
+      - key: DB_PASSWORD
+        generateValue: true
+      - key: MYSQL_ROOT_PASSWORD
+        generateValue: true
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: ACCESS_TOKEN_TTL
+        value: 15m
+      - key: REFRESH_TOKEN_TTL
+        value: 7d
+      - key: COOKIE_SECURE
+        value: 'true'
