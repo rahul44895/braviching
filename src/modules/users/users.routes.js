@@ -13,6 +13,7 @@ router.get('/:id', controller.getById);
 router.get('/:id/permissions', controller.getPermissions);
 router.post('/', validate(createSchema), controller.create);
 router.patch('/:id/permissions', validate(grantPermissionSchema), controller.grantPermission);
+router.delete('/:id/permissions/:permissionId', controller.revokePermission);
 router.patch('/:id/status', validate(statusSchema), controller.setStatus);
 
 module.exports = router;

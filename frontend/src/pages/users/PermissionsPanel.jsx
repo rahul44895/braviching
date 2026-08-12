@@ -5,26 +5,29 @@ import { Modal } from '../../components/Modal';
 import { Button } from '../../components/Button';
 import '../../styles/permissions.css';
 
-// Permissions here are additive-only by backend design (see README's documented scope trade-off:
-// no revocation of a specific grant). So this UI only ever has two states per permission: already
-// held (checked, disabled -- nothing to do) or not held (unchecked, click to grant). There's no
-// "uncheck" interaction because the API has no endpoint for it.
+const SOURCE_LABEL = {
+  department: 'Department default',
+  grant: 'Granted',
+  revoked: 'Revoked',
+};
+
+// Each permission is checked/unchecked based on `source` (department/grant = held, revoked/none =
+// not held), and every checkbox is interactive -- checking calls PATCH (grant, or un-revoke if a
+// revoke override exists), unchecking calls DELETE (revoke a default, or un-grant an explicit
+// one). Which of those two actually happens is decided server-side; the UI just says "make this
+// held" or "make this not held" and shows the resulting source next time it loads.
 export function PermissionsPanel({ targetUser, onClose }) {
   const toast = useToast();
-  const [catalog, setCatalog] = useState([]);
-  const [effective, setEffective] = useState(null);
-  const [granting, setGranting] = useState(null);
+  const [permissions, setPermissions] = useState(null);
+  const [toggling, setToggling] = useState(null);
   const [loadError, setLoadError] = useState(null);
+
+  const isSuperadmin = targetUser.role === 'superadmin';
 
   async function load() {
     setLoadError(null);
     try {
-      const [catalogRes, effectiveRes] = await Promise.all([
-        api.get('/permissions'),
-        api.get(`/users/${targetUser.id}/permissions`),
-      ]);
-      setCatalog(catalogRes);
-      setEffective(effectiveRes);
+      setPermissions(await api.get(`/users/${targetUser.id}/permissions`));
     } catch (err) {
       setLoadError(err.message);
     }
@@ -35,21 +38,24 @@ export function PermissionsPanel({ targetUser, onClose }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targetUser.id]);
 
-  async function grant(permissionId) {
-    setGranting(permissionId);
+  async function toggle(permission, held) {
+    setToggling(permission.id);
     try {
-      await api.patch(`/users/${targetUser.id}/permissions`, { permission_id: permissionId });
-      toast.success('Permission granted.');
+      if (held) {
+        await api.patch(`/users/${targetUser.id}/permissions`, { permission_id: permission.id });
+      } else {
+        await api.delete(`/users/${targetUser.id}/permissions/${permission.id}`);
+      }
+      toast.success(held ? 'Permission granted.' : 'Permission revoked.');
       await load();
     } catch (err) {
       toast.error(err.message);
     } finally {
-      setGranting(null);
+      setToggling(null);
     }
   }
 
-  const heldIds = new Set((effective || []).map((p) => p.id));
-  const byResource = catalog.reduce((acc, p) => {
+  const byResource = (permissions || []).reduce((acc, p) => {
     (acc[p.resource] ||= []).push(p);
     return acc;
   }, {});
@@ -67,15 +73,25 @@ export function PermissionsPanel({ targetUser, onClose }) {
     >
       {loadError && <div className="form-error-banner">{loadError}</div>}
 
-      {effective === null && !loadError && <p>Loading…</p>}
+      {isSuperadmin && (
+        <p
+          className="form-error-banner"
+          style={{ background: 'var(--color-cream-dark)', color: 'var(--color-text)' }}
+        >
+          SuperAdmin holds all permissions by role, not by grant -- there's nothing to revoke or
+          grant here.
+        </p>
+      )}
 
-      {effective !== null && (
+      {permissions === null && !loadError && <p>Loading…</p>}
+
+      {permissions !== null && (
         <div className="permissions-grid">
           {Object.entries(byResource).map(([resource, perms]) => (
             <div key={resource} className="permissions-group">
               <div className="permissions-group__title">{resource.replace('_', ' ')}</div>
               {perms.map((p) => {
-                const held = heldIds.has(p.id);
+                const held = p.source === 'department' || p.source === 'grant';
                 return (
                   <label
                     key={p.id}
@@ -84,10 +100,13 @@ export function PermissionsPanel({ targetUser, onClose }) {
                     <input
                       type="checkbox"
                       checked={held}
-                      disabled={held || granting === p.id}
-                      onChange={() => !held && grant(p.id)}
+                      disabled={isSuperadmin || toggling === p.id}
+                      onChange={() => toggle(p, !held)}
                     />
                     <span>{p.action}</span>
+                    {SOURCE_LABEL[p.source] && (
+                      <span className="permission-row__source">{SOURCE_LABEL[p.source]}</span>
+                    )}
                   </label>
                 );
               })}
@@ -97,9 +116,10 @@ export function PermissionsPanel({ targetUser, onClose }) {
       )}
 
       <p className="permissions-note">
-        Checked permissions are already held (via department default or a prior grant) and can't be
-        revoked here -- that's a documented backend limitation, not a UI gap. Click an unchecked box
-        to grant it; you can only grant permissions you hold yourself.
+        Unchecking a department-default permission creates a per-user override -- it doesn't change
+        the department's template, and only affects {targetUser.name}. Unchecking an explicit grant
+        simply removes it. Granting something new is still bounded by your own permissions; revoking
+        is not.
       </p>
     </Modal>
   );

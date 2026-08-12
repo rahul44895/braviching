@@ -1,5 +1,11 @@
 const bcrypt = require('bcrypt');
-const { User, UserPermission, RefreshToken, sequelize } = require('../../models');
+const {
+  User,
+  UserPermission,
+  DepartmentDefaultPermission,
+  RefreshToken,
+  sequelize,
+} = require('../../models');
 
 function findAllForManager(managerId) {
   return User.findAll({ where: { manager_id: managerId }, order: [['id', 'ASC']] });
@@ -26,12 +32,41 @@ async function create(data) {
   });
 }
 
+// Default (paranoid) scope -- only an ACTIVE row counts. Used to decide which branch
+// setUserPermission takes; upsert/remove below do their own paranoid:false lookups.
+function findActiveUserPermissionRow(userId, permissionId) {
+  return UserPermission.findOne({ where: { user_id: userId, permission_id: permissionId } });
+}
+
+async function departmentHasDefault(departmentId, permissionId) {
+  if (!departmentId) return false;
+  const row = await DepartmentDefaultPermission.findOne({
+    where: { department_id: departmentId, permission_id: permissionId },
+  });
+  return !!row;
+}
+
+// Batch versions of the above two, for rendering the full per-permission status list (one query
+// each instead of one per catalog permission).
+async function findDepartmentDefaultPermissionIds(departmentId) {
+  if (!departmentId) return [];
+  const rows = await DepartmentDefaultPermission.findAll({
+    where: { department_id: departmentId },
+    attributes: ['permission_id'],
+  });
+  return rows.map((r) => r.permission_id);
+}
+
+function findAllActiveUserPermissionRows(userId) {
+  return UserPermission.findAll({ where: { user_id: userId } });
+}
+
 /**
- * Idempotent grant: if a (user_id, permission_id) row was previously soft-deleted, restore it
- * instead of inserting a duplicate (the unique index covers soft-deleted rows too -- see the
- * soft-delete design note in the plan for why "re-grant after soft-delete" means restore).
+ * Idempotent upsert: if a (user_id, permission_id) row was previously soft-deleted, restore it
+ * instead of inserting a duplicate (the unique index covers soft-deleted rows too). Shared by
+ * upsertGrant/upsertRevoke below -- only the `type` differs.
  */
-async function grantPermission(userId, permissionId, grantedBy) {
+async function upsertUserPermissionRow(userId, permissionId, actingUserId, type) {
   const existing = await UserPermission.findOne({
     where: { user_id: userId, permission_id: permissionId },
     paranoid: false,
@@ -39,7 +74,8 @@ async function grantPermission(userId, permissionId, grantedBy) {
 
   if (existing) {
     if (existing.deleted_at) await existing.restore();
-    existing.granted_by = grantedBy;
+    existing.type = type;
+    existing.granted_by = actingUserId;
     await existing.save();
     return existing;
   }
@@ -47,8 +83,26 @@ async function grantPermission(userId, permissionId, grantedBy) {
   return UserPermission.create({
     user_id: userId,
     permission_id: permissionId,
-    granted_by: grantedBy,
+    granted_by: actingUserId,
+    type,
   });
+}
+
+function upsertGrant(userId, permissionId, actingUserId) {
+  return upsertUserPermissionRow(userId, permissionId, actingUserId, 'grant');
+}
+
+function upsertRevoke(userId, permissionId, actingUserId) {
+  return upsertUserPermissionRow(userId, permissionId, actingUserId, 'revoke');
+}
+
+// `row` is already known to be an active row (from findActiveUserPermissionRow) -- soft-delete it.
+function removeGrant(row) {
+  return row.destroy();
+}
+
+function removeRevoke(row) {
+  return row.destroy();
 }
 
 function findEmployeesOfManager(managerId, transaction) {
@@ -72,7 +126,14 @@ module.exports = {
   findAll,
   findById,
   create,
-  grantPermission,
+  findActiveUserPermissionRow,
+  departmentHasDefault,
+  findDepartmentDefaultPermissionIds,
+  findAllActiveUserPermissionRows,
+  upsertGrant,
+  upsertRevoke,
+  removeGrant,
+  removeRevoke,
   findEmployeesOfManager,
   setActive,
   revokeSession,

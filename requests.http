@@ -282,7 +282,7 @@ Content-Type: application/json
 ### PERMISSION DELEGATION -- SuperAdmin->Manager and Manager->Employee, same shared endpoint
 ### ============================================================================
 
-### SuperAdmin grants Manager2 permission_id=1 (client:create) -- expect 200
+### SuperAdmin grants Manager2 permission_id=1 (client:create) -- expect 204
 ### (SuperAdmin bypasses the additive department/grant system entirely -- see canGrantPermission.js)
 PATCH {{baseUrl}}/api/users/4/permissions
 Authorization: Bearer {{loginSuperadmin.response.body.$.accessToken}}
@@ -312,7 +312,7 @@ Content-Type: application/json
   "permission_id": 1
 }
 
-### Manager2 (now holds client:create from the grant above) grants it to Employee2 -- expect 200
+### Manager2 (now holds client:create from the grant above) grants it to Employee2 -- expect 204
 ### Demonstrates Manager->Employee delegation using the *same* canGrantPermission function.
 PATCH {{baseUrl}}/api/users/5/permissions
 Authorization: Bearer {{loginManager2.response.body.$.accessToken}}
@@ -321,6 +321,62 @@ Content-Type: application/json
 {
   "permission_id": 1
 }
+
+
+### ============================================================================
+### PERMISSION REVOCATION -- per-user overrides, see README §5.8 and the design spec at
+### docs/superpowers/specs/2026-08-13-permission-revocation-design.md
+### ============================================================================
+
+### Check Employee1's current permission status -- expect campaign CRUD + client:read as
+### "department", task:delete as "grant"
+GET {{baseUrl}}/api/users/3/permissions
+Authorization: Bearer {{loginManager1.response.body.$.accessToken}}
+
+### Manager1 revokes campaign:delete (permission_id=16) from Employee1 -- a department default,
+### not something Manager1 needs to hold themselves (revocation is unrestricted) -- expect 204
+DELETE {{baseUrl}}/api/users/3/permissions/16
+Authorization: Bearer {{loginManager1.response.body.$.accessToken}}
+
+### Employee1 tries to actually delete a campaign now -- expect 403 (this is real enforcement,
+### not just a display change: getEffectivePermissions genuinely excludes the revoked permission)
+DELETE {{baseUrl}}/api/campaigns/1
+Authorization: Bearer {{loginEmployee1.response.body.$.accessToken}}
+
+### Manager1 un-revokes it (PATCH = "make this held") -- expect 204, and the permission's `source`
+### reverts to "department", not "grant" -- this restores the default, it isn't a fresh grant
+PATCH {{baseUrl}}/api/users/3/permissions
+Authorization: Bearer {{loginManager1.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "permission_id": 16
+}
+
+### SuperAdmin revokes campaign:delete from Manager1 themselves -- expect 204
+DELETE {{baseUrl}}/api/users/2/permissions/16
+Authorization: Bearer {{loginSuperadmin.response.body.$.accessToken}}
+
+### Manager1 (who no longer holds campaign:delete) still revokes it from Employee1 anyway --
+### expect 204. Demonstrates: revocation is unrestricted, unlike granting.
+DELETE {{baseUrl}}/api/users/3/permissions/16
+Authorization: Bearer {{loginManager1.response.body.$.accessToken}}
+
+### For contrast: Manager1 (still without campaign:delete) tries to grant client:create (a
+### permission that is NOT a paid_media department default) to Employee1 -- expect 403. Granting
+### is still bounded by canGrantPermission; only revoking is unrestricted.
+PATCH {{baseUrl}}/api/users/3/permissions
+Authorization: Bearer {{loginManager1.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "permission_id": 1
+}
+
+### Manager1 tries to revoke something from Manager2 (a peer manager) -- expect 403 (ownership
+### rule still applies to revocation, same as granting)
+DELETE {{baseUrl}}/api/users/4/permissions/16
+Authorization: Bearer {{loginManager1.response.body.$.accessToken}}
 
 
 ### ============================================================================

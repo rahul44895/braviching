@@ -10,7 +10,7 @@ explicitly in the README (§5.8) as a deliberate scope trade-off, matching the o
 spec's own documented limitation:
 
 > `user_permissions` is additive-only by design ... Production version would add a `type
-> ENUM('grant', 'revoke')` column to `user_permissions` so an override could subtract as well as
+ENUM('grant', 'revoke')` column to `user_permissions` so an override could subtract as well as
 > add.
 
 Using the newly-built Users & Permissions frontend page, it became clear this limitation is a real
@@ -22,13 +22,13 @@ granted, scoped to one individual user, without touching the department-wide tem
 Two decisions were made before this design, in brainstorming:
 
 1. **Revocation is unrestricted** for a Manager acting on their own Employee — a Manager can
-   revoke *any* permission from their Employee, even one the Manager doesn't hold themselves.
+   revoke _any_ permission from their Employee, even one the Manager doesn't hold themselves.
    There's no privilege-escalation risk in reducing someone's access, only in expanding it, so the
    existing `canGrantPermission` bound (which exists specifically to prevent escalation) doesn't
    apply here. Revocation is still bounded by the existing ownership rule (`assertCanManageUser`)
    — a Manager can only act on their own Employees, never another Manager's, and never a peer
    Manager or SuperAdmin.
-2. **The UI shows *why* a permission is currently held** (department default vs. an explicit
+2. **The UI shows _why_ a permission is currently held** (department default vs. an explicit
    grant vs. previously revoked) rather than just checked/unchecked, since unchecking a
    department-derived permission and unchecking an explicitly-granted one are different actions
    under the hood, and a Manager should be able to tell which one they're doing.
@@ -92,7 +92,10 @@ async function setUserPermission(actingUser, targetUserId, permissionId, held) {
 
   assertCanManageUser(actingUser, targetUser); // ownership -- applies to grant, revoke, and un-revoke alike
 
-  const deptHasDefault = await repository.departmentHasDefault(targetUser.department_id, permissionId);
+  const deptHasDefault = await repository.departmentHasDefault(
+    targetUser.department_id,
+    permissionId,
+  );
   // Default (paranoid) scope -- only an ACTIVE row counts for deciding which branch to take below.
   // upsertGrant/upsertRevoke/removeGrant/removeRevoke each do their own paranoid:false lookup
   // internally to restore a previously soft-deleted row of the matching type instead of inserting
@@ -141,11 +144,11 @@ but may look like a no-op to the person clicking. Not worth special-casing for t
 
 ## API Changes
 
-| Method & Path | Change | Behavior |
-|---|---|---|
-| `PATCH /api/users/:id/permissions` | Unchanged contract | Body `{ permission_id }` → `setUserPermission(..., held=true)` |
-| `DELETE /api/users/:id/permissions/:permissionId` | **New** | → `setUserPermission(..., held=false)` |
-| `GET /api/users/:id/permissions` | **Response shape changes** | See below |
+| Method & Path                                     | Change                     | Behavior                                                       |
+| ------------------------------------------------- | -------------------------- | -------------------------------------------------------------- |
+| `PATCH /api/users/:id/permissions`                | Unchanged contract         | Body `{ permission_id }` → `setUserPermission(..., held=true)` |
+| `DELETE /api/users/:id/permissions/:permissionId` | **New**                    | → `setUserPermission(..., held=false)`                         |
+| `GET /api/users/:id/permissions`                  | **Response shape changes** | See below                                                      |
 
 `GET /api/users/:id/permissions` currently returns a flat array of effective `{id, resource,
 action}`. It changes to return **all 20 catalog permissions**, each annotated with where it

@@ -38,12 +38,22 @@ async function create(req, res, next) {
 
 async function grantPermission(req, res, next) {
   try {
-    const grant = await service.grantPermission(
+    await service.setUserPermission(req.user, Number(req.params.id), req.body.permission_id, true);
+    res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function revokePermission(req, res, next) {
+  try {
+    await service.setUserPermission(
       req.user,
       Number(req.params.id),
-      req.body.permission_id,
+      Number(req.params.permissionId),
+      false,
     );
-    res.status(200).json(grant);
+    res.status(204).send();
   } catch (err) {
     next(err);
   }
@@ -70,4 +80,12 @@ async function getPermissions(req, res, next) {
   }
 }
 
-module.exports = { list, getById, create, grantPermission, setStatus, getPermissions };
+module.exports = {
+  list,
+  getById,
+  create,
+  grantPermission,
+  revokePermission,
+  setStatus,
+  getPermissions,
+};

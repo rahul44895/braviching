@@ -1,9 +1,9 @@
 const repository = require('./users.repository');
 const assertCanManageUser = require('../../utils/assertCanManageUser');
 const canGrantPermission = require('../../utils/canGrantPermission');
-const getEffectivePermissions = require('../../utils/getEffectivePermissions');
 const recordAudit = require('../../utils/recordAudit');
 const ApiError = require('../../utils/ApiError');
+const { Permission } = require('../../models');
 
 async function list(actingUser) {
   if (actingUser.role === 'superadmin') return repository.findAll();
@@ -21,24 +21,57 @@ async function create(actingUser, data) {
 }
 
 /**
- * Shared delegation endpoint for both SuperAdmin->Manager and Manager->Employee grants -- doesn't
- * branch on granter role beyond assertCanManageUser + canGrantPermission, per the spec's "same
- * function, reused at both levels" rule.
+ * Shared delegation endpoint for both SuperAdmin->Manager and Manager->Employee, grant AND
+ * revoke alike -- doesn't branch on granter role beyond assertCanManageUser (+ canGrantPermission,
+ * only for the branch that actually expands access). See
+ * docs/superpowers/specs/2026-08-13-permission-revocation-design.md for the full reasoning.
+ *
+ * `held` decides direction: true = "make sure this is held" (grant, or undo a prior revoke),
+ * false = "make sure this is not held" (revoke, or undo a prior grant).
  */
-async function grantPermission(actingUser, targetUserId, permissionId) {
+async function setUserPermission(actingUser, targetUserId, permissionId, held) {
   const targetUser = await repository.findById(targetUserId);
   if (!targetUser) throw new ApiError(404, 'User not found');
 
   assertCanManageUser(actingUser, targetUser);
 
-  const allowed = await canGrantPermission(actingUser.id, permissionId);
-  if (!allowed) {
-    throw new ApiError(403, 'Cannot grant a permission you do not yourself hold');
+  const deptHasDefault = await repository.departmentHasDefault(
+    targetUser.department_id,
+    permissionId,
+  );
+  const existingRow = await repository.findActiveUserPermissionRow(targetUserId, permissionId);
+
+  if (held) {
+    if (existingRow?.type === 'revoke') {
+      await repository.removeRevoke(existingRow);
+    } else if (!deptHasDefault) {
+      // Only branch that expands access beyond what the department already provides -- the only
+      // one bounded by canGrantPermission. Un-revoking (above) restores access the department
+      // already intends for this user's role; it isn't a new grant.
+      const allowed = await canGrantPermission(actingUser.id, permissionId);
+      if (!allowed) {
+        throw new ApiError(403, 'Cannot grant a permission you do not yourself hold');
+      }
+      await repository.upsertGrant(targetUserId, permissionId, actingUser.id);
+    }
+    // else: already held via department default, nothing to do (idempotent)
+  } else {
+    if (existingRow?.type === 'grant') {
+      await repository.removeGrant(existingRow);
+    } else if (deptHasDefault) {
+      // Revocation is deliberately unrestricted (no canGrantPermission check) -- reducing access
+      // carries no privilege-escalation risk, only assertCanManageUser's ownership rule applies.
+      await repository.upsertRevoke(targetUserId, permissionId, actingUser.id);
+    }
+    // else: not held anyway, nothing to do (idempotent)
   }
 
-  const grant = await repository.grantPermission(targetUserId, permissionId, actingUser.id);
-  await recordAudit(actingUser.id, 'user:grant_permission', 'user', targetUserId);
-  return grant;
+  await recordAudit(
+    actingUser.id,
+    held ? 'user:grant_permission' : 'user:revoke_permission',
+    'user',
+    targetUserId,
+  );
 }
 
 /**
@@ -79,11 +112,16 @@ async function setActiveStatus(actingUser, targetUserId, isActive) {
 }
 
 /**
- * Read-only: what does this user currently hold? Same visibility rule as viewing their user
- * record (GET /users/:id) -- self, their own Manager, or SuperAdmin. Not the same thing as
- * assertCanManageUser, which additionally requires role===employee -- a Manager can *view* their
- * own effective permissions (to know what they're able to delegate) even though nobody manages
- * a Manager's permissions but SuperAdmin.
+ * Read-only: for every permission in the catalog, where does this user currently stand?
+ * 'department' | 'grant' | 'revoked' | 'none' -- see the design spec for what each means. Same
+ * visibility rule as viewing the user record (GET /users/:id) -- self, their own Manager, or
+ * SuperAdmin.
+ *
+ * SuperAdmin targets: they have no department_id and never receive user_permissions rows (their
+ * access is role-derived, bypassing this whole model -- see permission.middleware.js), so every
+ * permission mechanically resolves to 'none' here. That's correct given the underlying data, not
+ * a bug -- the frontend already knows the target's role and disables the panel for SuperAdmin
+ * targets rather than presenting a misleading "holds nothing" checklist.
  */
 async function getEffectivePermissionsForUser(actingUser, targetUserId) {
   const targetUser = await repository.findById(targetUserId);
@@ -95,7 +133,43 @@ async function getEffectivePermissionsForUser(actingUser, targetUserId) {
     throw new ApiError(403, "Not authorized to view this user's permissions");
   }
 
-  return getEffectivePermissions(targetUserId);
+  const [catalog, defaultIds, rows] = await Promise.all([
+    Permission.findAll({
+      order: [
+        ['resource', 'ASC'],
+        ['action', 'ASC'],
+      ],
+    }),
+    repository.findDepartmentDefaultPermissionIds(targetUser.department_id),
+    repository.findAllActiveUserPermissionRows(targetUserId),
+  ]);
+
+  const defaultIdSet = new Set(defaultIds);
+  const rowByPermissionId = new Map(rows.map((r) => [r.permission_id, r]));
+
+  return catalog.map((permission) => {
+    const row = rowByPermissionId.get(permission.id);
+    const isDefault = defaultIdSet.has(permission.id);
+
+    let source;
+    if (row?.type === 'grant') source = 'grant';
+    else if (row?.type === 'revoke') source = 'revoked';
+    else if (isDefault) source = 'department';
+    else source = 'none';
+
+    return {
+      id: permission.id,
+      resource: permission.resource,
+      action: permission.action,
+      source,
+    };
+  });
 }
 
-module.exports = { list, create, grantPermission, setActiveStatus, getEffectivePermissionsForUser };
+module.exports = {
+  list,
+  create,
+  setUserPermission,
+  setActiveStatus,
+  getEffectivePermissionsForUser,
+};

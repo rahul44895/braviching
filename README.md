@@ -102,19 +102,19 @@ path. `/health` is the one exception (infra convention, not a versioned API reso
 All routes except `/api/auth/login` and `/api/auth/refresh` require
 `Authorization: Bearer <accessToken>`.
 
-| Resource             | Routes                                                                                                                                           |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Auth                 | `POST /api/auth/login`, `POST /api/auth/refresh`, `POST /api/auth/logout`, `GET /api/auth/me`                                                    |
-| Clients              | `GET/POST /api/clients`, `GET/PATCH /api/clients/:id`, `GET /api/clients/:id/{campaigns,tasks,storefronts,marketplace-accounts}`                 |
-| Campaigns            | `GET/POST /api/campaigns`, `GET/PATCH/DELETE /api/campaigns/:id`                                                                                 |
-| Tasks                | `GET/POST /api/tasks`, `GET/PATCH/DELETE /api/tasks/:id`                                                                                         |
-| Storefronts          | `GET/POST /api/storefronts`, `GET/PATCH/DELETE /api/storefronts/:id`                                                                             |
-| Marketplace Accounts | `GET/POST /api/marketplace-accounts`, `GET/PATCH/DELETE /api/marketplace-accounts/:id`                                                           |
-| Departments          | `GET/POST /api/departments`                                                                                                                      |
-| Users                | `GET/POST /api/users`, `GET /api/users/:id`, `GET /api/users/:id/permissions`, `PATCH /api/users/:id/permissions`, `PATCH /api/users/:id/status` |
-| Permissions          | `GET /api/permissions` (the catalog -- resource/action pairs, not who holds what)                                                                |
-| Managers             | `POST /api/managers/:id/clients`                                                                                                                 |
-| Audit Logs           | `GET /api/audit-logs` (superadmin only)                                                                                                          |
+| Resource             | Routes                                                                                                                                                                                                                                                                      |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Auth                 | `POST /api/auth/login`, `POST /api/auth/refresh`, `POST /api/auth/logout`, `GET /api/auth/me`                                                                                                                                                                               |
+| Clients              | `GET/POST /api/clients`, `GET/PATCH /api/clients/:id`, `GET /api/clients/:id/{campaigns,tasks,storefronts,marketplace-accounts}`                                                                                                                                            |
+| Campaigns            | `GET/POST /api/campaigns`, `GET/PATCH/DELETE /api/campaigns/:id`                                                                                                                                                                                                            |
+| Tasks                | `GET/POST /api/tasks`, `GET/PATCH/DELETE /api/tasks/:id`                                                                                                                                                                                                                    |
+| Storefronts          | `GET/POST /api/storefronts`, `GET/PATCH/DELETE /api/storefronts/:id`                                                                                                                                                                                                        |
+| Marketplace Accounts | `GET/POST /api/marketplace-accounts`, `GET/PATCH/DELETE /api/marketplace-accounts/:id`                                                                                                                                                                                      |
+| Departments          | `GET/POST /api/departments`                                                                                                                                                                                                                                                 |
+| Users                | `GET/POST /api/users`, `GET /api/users/:id`, `GET /api/users/:id/permissions` (per-permission `source`, see §5.8), `PATCH /api/users/:id/permissions` (grant/un-revoke), `DELETE /api/users/:id/permissions/:permissionId` (revoke/un-grant), `PATCH /api/users/:id/status` |
+| Permissions          | `GET /api/permissions` (the catalog -- resource/action pairs, not who holds what)                                                                                                                                                                                           |
+| Managers             | `POST /api/managers/:id/clients`                                                                                                                                                                                                                                            |
+| Audit Logs           | `GET /api/audit-logs` (superadmin only)                                                                                                                                                                                                                                     |
 
 See [`requests.http`](requests.http) (VS Code REST Client format) for an annotated request per
 role x route combination -- it's the primary way to exercise and demonstrate every permission
@@ -238,13 +238,37 @@ Every error -- HTTP-layer and process-level -- flows through one Winston logger
 - `server.js` wires `unhandledRejection` and `uncaughtException` through the same logger, so a
   process-level crash is captured the same way an HTTP error is, not via a separate code path.
 
-### 5.8 Scope trade-off: revocation of specific default permissions (designed, not built)
+### 5.8 Permission revocation: per-user overrides, not department-template edits
 
-`user_permissions` is **additive-only by design** -- there is no way to revoke a single department
-default permission from one specific user without affecting the whole department. A production
-version of this schema would add a `type ENUM('grant', 'revoke')` column to `user_permissions` so
-an override could subtract as well as add. This is stated here as a deliberate scope decision for
-this build, not an oversight.
+`user_permissions` carries a `type ENUM('grant', 'revoke')` column (added after the initial build,
+once the Users & Permissions frontend page made the original additive-only limitation a real
+usability gap rather than a documented curiosity). Effective permissions are now:
+
+```
+effective = (department_defaults ∪ grant_rows) − revoke_rows
+```
+
+- **Revoking** a department-default permission from one user creates a `revoke`-type override row
+  -- it does **not** touch `department_default_permissions`, so nobody else in that department is
+  affected.
+- **Revocation is deliberately unrestricted**: a Manager can revoke _any_ permission from their own
+  Employee, even one the Manager doesn't hold themselves. There's no privilege-escalation risk in
+  reducing someone's access, only in expanding it -- the `canGrantPermission` bound exists
+  specifically to prevent escalation via delegation, and only applies to the one branch that
+  actually expands access (a genuinely new grant beyond what the department already provides).
+  Un-revoking (restoring department-default access) is equally unrestricted, for the same reason:
+  it isn't a new grant, just undoing a previous restriction. Both remain bounded by the ownership
+  rule (`assertCanManageUser`) -- a Manager still can't touch another Manager's or SuperAdmin's
+  permissions.
+- **SuperAdmin targets are a structural no-op**: SuperAdmin's access is role-derived (see §5.1),
+  bypassing this whole grant/revoke/department model entirely, so a revoke row against a SuperAdmin
+  target would do nothing. Rather than allow a UI interaction that silently no-ops, the Users &
+  Permissions panel disables all checkboxes for SuperAdmin targets with an explanation, instead of
+  presenting a misleading checklist.
+- See `docs/superpowers/specs/2026-08-13-permission-revocation-design.md` for the full design,
+  including the unified `setUserPermission(held)` toggle logic that decides grant vs. un-revoke vs.
+  revoke vs. un-grant from current state, so the frontend just says "make this held" or "make this
+  not held" without needing to know about rows or types.
 
 ### 5.9 Other scope notes
 
@@ -536,13 +560,17 @@ it internally (`getEffectivePermissions` was middleware-internal, never a respon
 
 - `GET /api/permissions` -- the catalog (resource/action pairs). Not sensitive; it's the set of
   things that could be granted, not who holds what.
-- `GET /api/users/:id/permissions` -- effective permissions for that user, reusing
-  `getEffectivePermissions` directly. Same visibility rule as viewing the user record itself (self,
-  their own Manager, or SuperAdmin).
+- `GET /api/users/:id/permissions` -- **every catalog permission** annotated with where it stands
+  for that user (`department` / `grant` / `revoked` / `none`), not just the effective subset. Same
+  visibility rule as viewing the user record itself (self, their own Manager, or SuperAdmin).
 
-The panel itself has only two states per permission -- held (checked, disabled) or not held
-(unchecked, click to grant) -- because the backend is additive-only by design (§5.8): there's no
-"uncheck" interaction because there's no revoke endpoint to call.
+Every checkbox is interactive (see §5.8 for the revocation model this enables): checking a box
+calls `PATCH /api/users/:id/permissions`, unchecking calls `DELETE
+/api/users/:id/permissions/:permissionId`. Each row also shows a small source tag ("Department
+default" / "Granted" / "Revoked") so a Manager can tell whether unchecking something removes a
+personal grant or overrides a department-wide default for just that one person. SuperAdmin targets
+render with every checkbox disabled and an explanatory banner, since SuperAdmin's access is
+role-derived and a revoke there would be a structural no-op (§5.8).
 
 ### What's next
 
