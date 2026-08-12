@@ -9,5 +9,6 @@ const router = Router();
 router.post('/login', validate(loginSchema), controller.login);
 router.post('/refresh', controller.refresh);
 router.post('/logout', authMiddleware, controller.logout);
+router.get('/me', authMiddleware, controller.me);
 
 module.exports = router;

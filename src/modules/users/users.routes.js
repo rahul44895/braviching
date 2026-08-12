@@ -10,6 +10,7 @@ router.use(authMiddleware);
 
 router.get('/', controller.list);
 router.get('/:id', controller.getById);
+router.get('/:id/permissions', controller.getPermissions);
 router.post('/', validate(createSchema), controller.create);
 router.patch('/:id/permissions', validate(grantPermissionSchema), controller.grantPermission);
 router.patch('/:id/status', validate(statusSchema), controller.setStatus);

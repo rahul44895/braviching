@@ -1,0 +1,43 @@
+:root {
+  /* Braviching palette, pulled from the marketing site */
+  --color-cream: #fbf0e1;
+  --color-cream-dark: #f3e2c9;
+  --color-teal: #1b5e4f;
+  --color-teal-dark: #123f35;
+  --color-orange: #f1652e;
+  --color-orange-dark: #d6531f;
+  --color-navy: #1e2a3a;
+  --color-navy-light: #2a3b4f;
+
+  --color-white: #ffffff;
+  --color-text: #1e2a3a;
+  --color-text-muted: #5b6472;
+  --color-border: #e5e0d8;
+
+  --color-success-bg: #e6f4ea;
+  --color-success-text: #1e7b34;
+  --color-danger-bg: #fdecea;
+  --color-danger-text: #c0392b;
+  --color-warning-bg: #fff4e0;
+  --color-warning-text: #8a5a00;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+
+  --shadow-sm: 0 1px 3px rgba(30, 42, 58, 0.08);
+  --shadow-md: 0 4px 16px rgba(30, 42, 58, 0.12);
+
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+
+  --sidebar-width: 220px;
+  --topbar-height: 56px;
+}

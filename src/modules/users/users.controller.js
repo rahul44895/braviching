@@ -58,4 +58,16 @@ async function setStatus(req, res, next) {
   }
 }
 
-module.exports = { list, getById, create, grantPermission, setStatus };
+async function getPermissions(req, res, next) {
+  try {
+    const permissions = await service.getEffectivePermissionsForUser(
+      req.user,
+      Number(req.params.id),
+    );
+    res.json(permissions);
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { list, getById, create, grantPermission, setStatus, getPermissions };

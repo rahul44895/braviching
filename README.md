@@ -1,14 +1,17 @@
-# Client Ops & Campaign Manager -- Backend
+# Client Ops & Campaign Manager
 
-An internal API for an ecommerce ops agency to manage clients, storefronts, marketplace accounts,
+An internal tool for an ecommerce ops agency to manage clients, storefronts, marketplace accounts,
 ad campaigns, and tasks across staff with layered, delegatable permissions.
 
-This repository covers the **backend only** (Node/Express/MySQL/Sequelize). The React/Vite
-frontend is out of scope for this pass and will be planned separately against this API.
+Full-stack: an Express/MySQL/Sequelize API and a React (Vite) frontend, served from a single
+Express process at runtime (see §9). The frontend covers the staff-side experience (SuperAdmin,
+Manager, Employee) -- the read-only Client portal is a follow-up, not built in this pass.
 
 ## 1. Technology Stack
 
-- **Runtime**: Node.js + Express
+- **Backend**: Node.js + Express
+- **Frontend**: React + Vite, plain JavaScript, no UI component library or state-management
+  dependency (hand-built primitives + React Context + a thin fetch wrapper -- see §9)
 - **Database**: MySQL 8 (via Sequelize ORM + Sequelize CLI migrations/seeders)
 - **Auth**: JWT access tokens (15 min) + rotating refresh tokens (7 days, httpOnly cookie, hashed
   server-side)
@@ -24,7 +27,7 @@ frontend is out of scope for this pass and will be planned separately against th
 - Node.js 20+
 - Docker + Docker Compose
 
-### Steps
+### Steps (backend)
 
 ```bash
 npm install
@@ -40,7 +43,20 @@ already in use by unrelated services on the machine this was built on, so `.env.
 app to `4000` and MySQL to `3307` instead. Adjust freely if your machine is clear on the standard
 ports.
 
-Useful scripts:
+### Steps (frontend)
+
+```bash
+cd frontend
+npm install
+npm run dev   # Vite dev server, proxies /api to the Express server on :4000 (see vite.config.js)
+```
+
+Open the URL Vite prints (typically `http://localhost:5173`). This is separate from the backend's
+`npm run dev` above -- run both at once for local full-stack development. In production, there's no
+separate frontend server at all: `npm run build` here produces `frontend/dist`, which Express
+serves directly (see §9).
+
+Useful backend scripts:
 
 | Script                            | Purpose                                                                                          |
 | --------------------------------- | ------------------------------------------------------------------------------------------------ |
@@ -78,20 +94,27 @@ endpoints return data immediately.
 
 ## 4. API Overview
 
-All routes except `/auth/login` and `/auth/refresh` require `Authorization: Bearer <accessToken>`.
+Every backend route lives under `/api` -- the frontend has its own client-side routes at the bare
+resource names (`/clients`, `/campaigns`, ...), so this prefix is what keeps a browser navigation
+to `/clients` from colliding with the frontend's own `fetch('/clients')` call at the exact same
+path. `/health` is the one exception (infra convention, not a versioned API resource).
 
-| Resource             | Routes                                                                                                               |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| Auth                 | `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`                                                        |
-| Clients              | `GET/POST /clients`, `GET/PATCH /clients/:id`, `GET /clients/:id/{campaigns,tasks,storefronts,marketplace-accounts}` |
-| Campaigns            | `GET/POST /campaigns`, `GET/PATCH/DELETE /campaigns/:id`                                                             |
-| Tasks                | `GET/POST /tasks`, `GET/PATCH/DELETE /tasks/:id`                                                                     |
-| Storefronts          | `GET/POST /storefronts`, `GET/PATCH/DELETE /storefronts/:id`                                                         |
-| Marketplace Accounts | `GET/POST /marketplace-accounts`, `GET/PATCH/DELETE /marketplace-accounts/:id`                                       |
-| Departments          | `GET/POST /departments`                                                                                              |
-| Users                | `GET/POST /users`, `GET /users/:id`, `PATCH /users/:id/permissions`, `PATCH /users/:id/status`                       |
-| Managers             | `POST /managers/:id/clients`                                                                                         |
-| Audit Logs           | `GET /audit-logs` (superadmin only)                                                                                  |
+All routes except `/api/auth/login` and `/api/auth/refresh` require
+`Authorization: Bearer <accessToken>`.
+
+| Resource             | Routes                                                                                                                                           |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Auth                 | `POST /api/auth/login`, `POST /api/auth/refresh`, `POST /api/auth/logout`, `GET /api/auth/me`                                                    |
+| Clients              | `GET/POST /api/clients`, `GET/PATCH /api/clients/:id`, `GET /api/clients/:id/{campaigns,tasks,storefronts,marketplace-accounts}`                 |
+| Campaigns            | `GET/POST /api/campaigns`, `GET/PATCH/DELETE /api/campaigns/:id`                                                                                 |
+| Tasks                | `GET/POST /api/tasks`, `GET/PATCH/DELETE /api/tasks/:id`                                                                                         |
+| Storefronts          | `GET/POST /api/storefronts`, `GET/PATCH/DELETE /api/storefronts/:id`                                                                             |
+| Marketplace Accounts | `GET/POST /api/marketplace-accounts`, `GET/PATCH/DELETE /api/marketplace-accounts/:id`                                                           |
+| Departments          | `GET/POST /api/departments`                                                                                                                      |
+| Users                | `GET/POST /api/users`, `GET /api/users/:id`, `GET /api/users/:id/permissions`, `PATCH /api/users/:id/permissions`, `PATCH /api/users/:id/status` |
+| Permissions          | `GET /api/permissions` (the catalog -- resource/action pairs, not who holds what)                                                                |
+| Managers             | `POST /api/managers/:id/clients`                                                                                                                 |
+| Audit Logs           | `GET /api/audit-logs` (superadmin only)                                                                                                          |
 
 See [`requests.http`](requests.http) (VS Code REST Client format) for an annotated request per
 role x route combination -- it's the primary way to exercise and demonstrate every permission
@@ -425,3 +448,104 @@ The password for every seeded account (`Password123!`) is printed in this README
 seed data should never be treated as a real production dataset** -- don't reuse this deployment
 pattern as-is for an app with real client data without replacing the seed step with something that
 doesn't ship known credentials.
+
+## 9. Frontend
+
+`frontend/` is a separate Vite + React project (plain JavaScript). It covers the **staff-side**
+experience only -- SuperAdmin, Manager, and Employee. The read-only Client portal is a deliberate
+follow-up, not built in this pass (see the brainstorm scoping decision -- staff-side first was
+chosen because the four roles' experiences differ enough that building all of them in one pass
+would have meant a much larger build before anything was usable end to end).
+
+### Why the frontend and backend share one process
+
+`npm run build` in `frontend/` outputs static assets to `frontend/dist/`. Express serves them
+directly via `express.static`, plus a catch-all route for anything that isn't a real static file or
+an API route -- that's what lets React Router handle client-side routes and deep-link refreshes
+(reloading on `/campaigns` directly, for instance) without a 404. There's no separate frontend
+server or CDN in this deployment; the whole app is one Express process, one Render service (see
+§8). Locally, `frontend`'s Vite dev server runs on its own port with API calls proxied to Express
+(`vite.config.js`) -- only production collapses everything into one origin.
+
+### The `/api` prefix -- a real bug this design almost shipped
+
+Every backend route lives under `/api` (`/api/clients`, `/api/campaigns`, ...), **not** the bare
+resource names the spec originally sketched. The reason: the frontend has its own client-side
+route at `/clients` (the Clients list page) -- without the prefix, a browser navigating to
+`/clients` and the frontend's own `fetch('/clients')` call would collide at the exact same path,
+with Express unable to tell "render the SPA" from "return the JSON list" apart. This was caught
+while wiring up `express.static` + the SPA fallback, before it ever reached a browser, but it's the
+kind of bug that's invisible in the backend alone -- it only exists because a frontend occupying
+the same route names now exists too. `apiClient.js` centralizes the `/api` prefix in one place, so
+every page component still just calls `api.get('/clients')` unprefixed.
+
+### Auth flow
+
+- The access token lives in memory only (React Context), never `localStorage` -- consistent with
+  the backend's security posture. The refresh token is the only persisted credential, and that's an
+  httpOnly cookie the frontend JS never touches directly.
+- `apiClient.js` wraps `fetch`: attaches the bearer token, and on a `401` attempts one silent
+  `POST /api/auth/refresh` (cookie-based) and retries the original request once before giving up
+  and redirecting to `/login`.
+- On a hard page reload, there's no access token in memory yet, so the app immediately attempts a
+  silent refresh via the cookie to restore the session (`GET /api/auth/me` -- added specifically
+  for this; the JWT payload alone only carries `id`/`role`, not a name to display).
+- **A real bug found by an actual browser test, not code review**: the refresh-token cookie was set
+  with `path: '/auth'`, left over from before the `/api` prefix existed. After the prefix change,
+  the browser stopped attaching the cookie to `/api/auth/refresh` at all (a cookie's `Path` scopes
+  exactly which request paths it's sent on) -- session restoration silently failed on every hard
+  reload or new tab, always falling back to the login page. Grepping/reading the code wouldn't
+  have caught this (both pieces looked individually correct); only driving a real browser through
+  a hard navigation surfaced it. Fixed in `auth.controller.js` by moving the cookie's `path` to
+  `/api/auth` to match.
+
+### Layout & design system
+
+Navy topbar (brand + current user + logout) and a cream sidebar (nav items filtered by role,
+collapsing to an off-canvas drawer below 900px) -- colors pulled from Braviching's own marketing
+site. Every list screen follows the same pattern: a data table (not cards -- chosen for scanning
+and sorting columns like status/client/assignee), a "New X" button opening a modal form over the
+list (chosen over dedicated `/x/new` routes to avoid doubling the route count per resource), row
+actions for Edit/Delete, and a `useCrudResource(basePath)` hook that collapses the near-identical
+list+create+update+delete data logic shared by Clients/Campaigns/Tasks/Storefronts/Marketplace
+Accounts into one hook instead of five.
+
+Two responsive bugs were caught the same way -- by actually loading the app in a real (headless)
+browser at a mobile viewport, not by reading the CSS:
+
+- The topbar's user name/role badge had no narrow-screen handling and visually overlapped the
+  brand text below ~480px. Fixed by hiding that text at that breakpoint -- Log out and the
+  hamburger menu are what's essential there, not the name.
+- Data tables were wrapping cell text across multiple lines on narrow screens instead of scrolling
+  horizontally, because the table had no `min-width` -- the `.scroll-x` wrapper's `overflow-x` had
+  nothing to actually overflow. Fixed by giving `.data-table` a `min-width` so it refuses to shrink
+  below a usable width and genuinely scrolls instead.
+
+A third bug (not responsive-related) was also only visible once real elements existed on a real
+page: `.sidebar__link:hover` has higher CSS specificity than `.sidebar__link--active` (a
+pseudo-class outweighs a single class), so hovering the currently-active nav item showed the hover
+color instead of the active one, regardless of source order in the stylesheet. Fixed by repeating
+the active selector with `:hover` appended so it matches specificity.
+
+### Permissions UI reveals two backend gaps
+
+Building the Users & Permissions page needed two things the API didn't expose yet: the catalog of
+grantable permissions, and a given user's current effective permissions. Both were missing because
+nothing before this needed to _display_ the permission model -- the backend only ever _checked_
+it internally (`getEffectivePermissions` was middleware-internal, never a response body). Added:
+
+- `GET /api/permissions` -- the catalog (resource/action pairs). Not sensitive; it's the set of
+  things that could be granted, not who holds what.
+- `GET /api/users/:id/permissions` -- effective permissions for that user, reusing
+  `getEffectivePermissions` directly. Same visibility rule as viewing the user record itself (self,
+  their own Manager, or SuperAdmin).
+
+The panel itself has only two states per permission -- held (checked, disabled) or not held
+(unchecked, click to grant) -- because the backend is additive-only by design (§5.8): there's no
+"uncheck" interaction because there's no revoke endpoint to call.
+
+### What's next
+
+The Client portal (read-only campaigns/tasks/storefronts/marketplace-accounts for their own
+account) is the natural next slice -- it reuses the same data table pattern and `useCrudResource`
+shape, just without any create/edit/delete affordances.

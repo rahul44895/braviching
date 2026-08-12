@@ -1,6 +1,7 @@
 const repository = require('./users.repository');
 const assertCanManageUser = require('../../utils/assertCanManageUser');
 const canGrantPermission = require('../../utils/canGrantPermission');
+const getEffectivePermissions = require('../../utils/getEffectivePermissions');
 const recordAudit = require('../../utils/recordAudit');
 const ApiError = require('../../utils/ApiError');
 
@@ -77,4 +78,24 @@ async function setActiveStatus(actingUser, targetUserId, isActive) {
   return repository.findById(targetUserId);
 }
 
-module.exports = { list, create, grantPermission, setActiveStatus };
+/**
+ * Read-only: what does this user currently hold? Same visibility rule as viewing their user
+ * record (GET /users/:id) -- self, their own Manager, or SuperAdmin. Not the same thing as
+ * assertCanManageUser, which additionally requires role===employee -- a Manager can *view* their
+ * own effective permissions (to know what they're able to delegate) even though nobody manages
+ * a Manager's permissions but SuperAdmin.
+ */
+async function getEffectivePermissionsForUser(actingUser, targetUserId) {
+  const targetUser = await repository.findById(targetUserId);
+  if (!targetUser) throw new ApiError(404, 'User not found');
+
+  const isSelf = targetUser.id === actingUser.id;
+  const isOwnEmployee = actingUser.role === 'manager' && targetUser.manager_id === actingUser.id;
+  if (actingUser.role !== 'superadmin' && !isSelf && !isOwnEmployee) {
+    throw new ApiError(403, "Not authorized to view this user's permissions");
+  }
+
+  return getEffectivePermissions(targetUserId);
+}
+
+module.exports = { list, create, grantPermission, setActiveStatus, getEffectivePermissionsForUser };

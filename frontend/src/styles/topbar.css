@@ -1,0 +1,84 @@
+.topbar {
+  height: var(--topbar-height);
+  background: var(--color-navy);
+  color: var(--color-white);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--space-4);
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 850;
+}
+
+.topbar__left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.topbar__brand {
+  font-weight: 700;
+  font-size: 18px;
+  letter-spacing: 0.01em;
+}
+
+.topbar__menu-btn {
+  display: none;
+  background: none;
+  border: none;
+  color: var(--color-white);
+  font-size: 20px;
+  cursor: pointer;
+  padding: var(--space-1);
+}
+
+.topbar__right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.topbar__user {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.topbar__role {
+  text-transform: capitalize;
+  background: rgba(255, 255, 255, 0.15);
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  margin-left: 4px;
+}
+
+/* Ghost buttons need to read on the dark topbar, not the light-on-light default. */
+.topbar .btn--ghost {
+  color: var(--color-white);
+}
+.topbar .btn--ghost:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+@media (max-width: 900px) {
+  .topbar__menu-btn {
+    display: block;
+  }
+}
+
+/* Found via browser verification: at narrow widths the user name/role badge crammed into the
+   same row as the brand and Log out button, overlapping rather than wrapping. Name/role aren't
+   essential at this width -- Log out and the hamburger are. */
+@media (max-width: 480px) {
+  .topbar {
+    padding: 0 var(--space-3);
+  }
+  .topbar__brand {
+    font-size: 15px;
+  }
+  .topbar__user {
+    display: none;
+  }
+}

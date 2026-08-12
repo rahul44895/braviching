@@ -4,3 +4,4 @@ logs
 .env.*
 !.env.example
 .git
+frontend/dist

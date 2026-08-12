@@ -1,0 +1,46 @@
+.data-table {
+  width: 100%;
+  /* Found via browser verification: without a min-width, the table just shrank to fit a narrow
+     viewport and wrapped cell text across multiple lines instead of scrolling -- the .scroll-x
+     wrapper's overflow-x had nothing to actually overflow. This forces genuine horizontal scroll
+     on narrow screens instead (the documented "scroll, don't reflow" decision from the brainstorm). */
+  min-width: 640px;
+  border-collapse: collapse;
+  background: var(--color-white);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  font-size: 14px;
+}
+
+.data-table thead th {
+  text-align: left;
+  background: var(--color-cream);
+  color: var(--color-text-muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: var(--space-3) var(--space-4);
+  white-space: nowrap;
+}
+
+.data-table tbody td {
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--color-border);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.data-table tbody tr:hover {
+  background: var(--color-cream);
+}
+
+.data-table__empty {
+  text-align: center;
+  color: var(--color-text-muted);
+  padding: var(--space-8) !important;
+}
+
+.table-actions {
+  display: flex;
+  gap: var(--space-2);
+}

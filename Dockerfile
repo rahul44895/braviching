@@ -1,7 +1,19 @@
-# Single container running both the Node API and MySQL. Ubuntu (not Debian) is the base because
-# Ubuntu's `mysql-server` package is genuine MySQL 8 -- Debian's default MySQL package resolves to
-# MariaDB instead, which we don't want (the local dev setup and everywhere else this was tested
-# against is real MySQL 8 via docker-compose).
+# --- Stage 1: build the frontend -------------------------------------------------------------
+# Plain node image (no MySQL/Ubuntu needed here) -- devDependencies (Vite, React) only ever exist
+# in this throwaway build stage, never in the runtime image, so the 512MB-RAM runtime container
+# isn't carrying build tooling it doesn't need.
+FROM node:20-slim AS frontend-build
+
+WORKDIR /app/frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+
+# --- Stage 2: runtime, Node API + MySQL in one container --------------------------------------
+# Ubuntu (not Debian) because Ubuntu's `mysql-server` package is genuine MySQL 8 -- Debian's
+# default MySQL package resolves to MariaDB instead, which we don't want (the local dev setup and
+# everywhere else this was tested against is real MySQL 8 via docker-compose).
 FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -23,6 +35,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
 COPY . .
+COPY --from=frontend-build /app/frontend/dist ./frontend/dist
 
 COPY deploy/single-container/start.sh /start.sh
 
