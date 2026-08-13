@@ -49,9 +49,11 @@ export function UsersPage() {
       header: '',
       render: (row) => (
         <div className="table-actions">
-          <Button variant="secondary" size="sm" onClick={() => setManagingPermissionsFor(row)}>
-            Permissions
-          </Button>
+          {row.role !== 'client' && (
+            <Button variant="secondary" size="sm" onClick={() => setManagingPermissionsFor(row)}>
+              Permissions
+            </Button>
+          )}
           {row.id !== me.id && (
             <Button
               variant={row.is_active ? 'danger' : 'primary'}

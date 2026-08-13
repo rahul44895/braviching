@@ -22,7 +22,14 @@ export function PermissionsPanel({ targetUser, onClose }) {
   const [toggling, setToggling] = useState(null);
   const [loadError, setLoadError] = useState(null);
 
+  // Both roles sit entirely outside the department/grant/revoke model (see README §5.1) -- a
+  // revoke or grant against either would be a structural no-op, so the panel is read-only for
+  // both rather than presenting a checklist that looks editable but isn't. In practice Client
+  // targets never reach this panel at all (UsersPage hides the "Permissions" button for them),
+  // but this stays as defense in depth rather than relying solely on the button being hidden.
   const isSuperadmin = targetUser.role === 'superadmin';
+  const isClient = targetUser.role === 'client';
+  const isReadOnlyRole = isSuperadmin || isClient;
 
   async function load() {
     setLoadError(null);
@@ -73,13 +80,14 @@ export function PermissionsPanel({ targetUser, onClose }) {
     >
       {loadError && <div className="form-error-banner">{loadError}</div>}
 
-      {isSuperadmin && (
+      {isReadOnlyRole && (
         <p
           className="form-error-banner"
           style={{ background: 'var(--color-cream-dark)', color: 'var(--color-text)' }}
         >
-          SuperAdmin holds all permissions by role, not by grant -- there's nothing to revoke or
-          grant here.
+          {isSuperadmin
+            ? "SuperAdmin holds all permissions by role, not by grant -- there's nothing to revoke or grant here."
+            : "Client accounts are read-only by design and aren't part of the department/grant system -- there's nothing to revoke or grant here."}
         </p>
       )}
 
@@ -100,7 +108,7 @@ export function PermissionsPanel({ targetUser, onClose }) {
                     <input
                       type="checkbox"
                       checked={held}
-                      disabled={isSuperadmin || toggling === p.id}
+                      disabled={isReadOnlyRole || toggling === p.id}
                       onChange={() => toggle(p, !held)}
                     />
                     <span>{p.action}</span>

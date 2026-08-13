@@ -260,11 +260,13 @@ effective = (department_defaults ∪ grant_rows) − revoke_rows
   it isn't a new grant, just undoing a previous restriction. Both remain bounded by the ownership
   rule (`assertCanManageUser`) -- a Manager still can't touch another Manager's or SuperAdmin's
   permissions.
-- **SuperAdmin targets are a structural no-op**: SuperAdmin's access is role-derived (see §5.1),
-  bypassing this whole grant/revoke/department model entirely, so a revoke row against a SuperAdmin
-  target would do nothing. Rather than allow a UI interaction that silently no-ops, the Users &
-  Permissions panel disables all checkboxes for SuperAdmin targets with an explanation, instead of
-  presenting a misleading checklist.
+- **SuperAdmin and Client targets are both structural no-ops**: SuperAdmin's access is role-derived
+  (see §5.1) and Client is read-only by role (also §5.1) -- neither participates in the
+  department/grant/revoke model at all, so a revoke or grant row against either would do nothing.
+  Rather than allow a UI interaction that silently no-ops, the Users & Permissions panel disables
+  all checkboxes for both, with a role-appropriate explanation, instead of presenting a misleading
+  checklist. For Client accounts specifically, `UsersPage` goes a step further and doesn't render
+  the "Permissions" button at all -- there's nothing to manage, so no reason to invite the click.
 - See `docs/superpowers/specs/2026-08-13-permission-revocation-design.md` for the full design,
   including the unified `setUserPermission(held)` toggle logic that decides grant vs. un-revoke vs.
   revoke vs. un-grant from current state, so the frontend just says "make this held" or "make this
@@ -568,9 +570,11 @@ Every checkbox is interactive (see §5.8 for the revocation model this enables):
 calls `PATCH /api/users/:id/permissions`, unchecking calls `DELETE
 /api/users/:id/permissions/:permissionId`. Each row also shows a small source tag ("Department
 default" / "Granted" / "Revoked") so a Manager can tell whether unchecking something removes a
-personal grant or overrides a department-wide default for just that one person. SuperAdmin targets
-render with every checkbox disabled and an explanatory banner, since SuperAdmin's access is
-role-derived and a revoke there would be a structural no-op (§5.8).
+personal grant or overrides a department-wide default for just that one person. SuperAdmin and
+Client targets both render with every checkbox disabled and a role-appropriate explanatory banner,
+since neither participates in the grant/revoke model at all (§5.8) -- for Client rows, `UsersPage`
+doesn't even render the "Permissions" button in the first place, so this is defense in depth rather
+than the only guard.
 
 ### What's next
 
